@@ -72,6 +72,33 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         return (query.get("token") or [""])[0] == token
 
+    # --- 本地调用的来源校验 --------------------------------------------
+    # 风险面：本服务监听回环地址，但**任何网页**都能向 http://127.0.0.1:<port>/api/teleport
+    # 发一个"简单请求"（form / text-plain 的 POST 不触发 CORS 预检），用户只是顺手打开了
+    # 一个页面，手机定位就被改掉。这里用浏览器自己带的两条线索拒绝跨站来源：
+    #   · Origin：只接受与本机地址同源的页面（即本服务自己 serve 的 web/）；
+    #   · Sec-Fetch-Site：cross-site 一律拒绝（老浏览器没有该头，不依赖它兜底）。
+    # SwiftUI 外壳走 URLSession，两个头都不带 —— 不受影响。
+    def _trusted_origin(self) -> bool:
+        host = self.headers.get("Host") or ""
+        origin = self.headers.get("Origin")
+        if origin is not None and origin not in {"http://" + host, "https://" + host}:
+            return False
+        if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() == "cross-site":
+            return False
+        return True
+
+    # DNS rebinding 防护：只在绑定回环时生效 —— 攻击者让恶意域名解析到 127.0.0.1 后，
+    # 浏览器会把请求当成"同源到那个域名"，Origin 检查被绕过，所以还要看 Host。
+    def _trusted_host(self) -> bool:
+        if not getattr(self.server, "loopback_only", False):
+            return True
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return True  # HTTP/1.0 客户端可能不带 Host，不因此拒绝
+        name = host.rsplit(":", 1)[0].strip("[]")
+        return name in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+
     # --- 路由 ----------------------------------------------------------
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -79,6 +106,8 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if not self._authorized():
                 return self._json_error(401, "token 无效")
+            if not self._trusted_host():
+                return self._json_error(403, "拒绝非本机 Host 的请求")
             if path in ("/api/events", "/api/events/"):
                 return self._serve_events()
             query = parse_qs(parsed.query)
@@ -98,6 +127,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_error(404, "未知路径")
         if not self._authorized():
             return self._json_error(401, "token 无效")
+        # 写操作才需要来源校验：这是"改定位"的唯一入口，最需要挡住网页 CSRF
+        if not self._trusted_host():
+            return self._json_error(403, "拒绝非本机 Host 的请求")
+        if not self._trusted_origin():
+            return self._json_error(403, "拒绝跨站来源的写请求")
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -124,6 +158,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_error(404, "未知路径")
         if not self._authorized():
             return self._json_error(401, "token 无效")
+        if not self._trusted_host():
+            return self._json_error(403, "拒绝非本机 Host 的请求")
+        if not self._trusted_origin():
+            return self._json_error(403, "拒绝跨站来源的写请求")
         try:
             status, payload, content_type = api_module.handle(self.session, "DELETE", path, query=parse_qs(parsed.query))
         except api_module.ApiError as exc:
@@ -219,6 +257,8 @@ class LocPilotServer:
         self.httpd.daemon_threads = True
         self.httpd.session = session
         self.httpd.token = token
+        # 只有绑在回环上才做 Host 白名单（用户显式 --host 0.0.0.0 时不干预其用法）
+        self.httpd.loopback_only = str(host).strip().lower() in ("127.0.0.1", "localhost", "::1")
         self.port = self.httpd.server_address[1]
 
     @property

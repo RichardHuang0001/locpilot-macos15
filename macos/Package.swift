@@ -6,10 +6,10 @@ import PackageDescription
 // 状态统一用 ObservableObject + @StateObject / @Published（属性包装器，CLT 可用）。
 let package = Package(
     name: "LocPilot",
-    // 必须是 26 起：macOS 用"链接时记录的 SDK 版本"决定是否启用 Liquid Glass 新外观，
-    // 低于 26 的 SDK 会整体回落到旧版控件样式（红绿灯等系统控件都会变样）。
-    // 用字符串形式而不是 .v26，兼容更早的 swift-tools-version。
-    platforms: [.macOS("26.0")],
+    // macOS 15 兼容分支：原版要求 26（为了 Liquid Glass 新外观），
+    // 这里降到 15.0，玻璃外观改由 .regularMaterial 实现（见 ControlsCluster.swift 的 GlassChrome）。
+    // 用字符串形式而不是 .v15，兼容更早的 swift-tools-version。
+    platforms: [.macOS("15.0")],
     products: [
         .library(name: "LocPilotKit", targets: ["LocPilotKit"]),
         .executable(name: "LocPilot", targets: ["LocPilotApp"]),

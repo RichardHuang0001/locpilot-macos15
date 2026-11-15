@@ -31,7 +31,7 @@ case "$VERSION" in
   [0-9]*) ;;
   *) VERSION="1.0.0" ;;
 esac
-DMG="$DIST/LocPilot-${VERSION}-arm64.dmg"
+DMG="$DIST/LocPilot-${VERSION}-macOS15-arm64.dmg"
 
 echo "==> 清洗分发产物"
 # 1) 去掉本机绝对路径
@@ -51,13 +51,19 @@ codesign --verify --deep --strict "$APP" >/dev/null 2>&1 && echo "    ✓ ad-hoc
 echo "==> 分发前自检"
 ARCH="$(lipo -info "$APP/Contents/MacOS/LocPilot" | awk '{print $NF}')"
 [ "$ARCH" = "arm64" ] && echo "    ✓ 架构 arm64（Apple Silicon 原生）" || { echo "    ✗ 架构异常: $ARCH" >&2; exit 1; }
-[ -d "$APP/Contents/Resources/backend/locpilot" ] && echo "    ✓ 包内已带后端源码（无仓库环境兜底）" || { echo "    ✗ 缺少包内后端" >&2; exit 1; }
-if grep -rIl "/Users/seinding" "$APP/Contents" 2>/dev/null | head -3 | grep -q .; then
-  echo "    ✗ 包内仍含本机用户名路径：" >&2
-  grep -rIl "/Users/seinding" "$APP/Contents" 2>/dev/null | head -5 >&2
+if [ -d "$APP/Contents/Resources/backend/locpilot" ]; then
+  echo "    ✓ 包内已带后端源码（无仓库环境兜底）"
+else
+  echo "    ✗ 缺少包内后端" >&2; exit 1
+fi
+# 不写死某个用户名：包里只要出现任何 /Users/<name>/ 形式的开发机绝对路径就失败
+LEAKED="$(grep -rIlE '/Users/[A-Za-z0-9._-]+/' "$APP/Contents" 2>/dev/null | head -3 || true)"
+if [ -n "$LEAKED" ]; then
+  echo "    ✗ 包内仍含本机绝对路径：" >&2
+  printf '%s\n' "$LEAKED" >&2
   exit 1
 fi
-echo "    ✓ 包内不含本机用户名路径"
+echo "    ✓ 包内不含本机绝对路径"
 
 echo "==> 组装 DMG"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
@@ -85,13 +91,13 @@ App 首次运行只会拉起内置后端；要驱动真机，需要 pymobiledevi
 3. 在地图上点任意位置 —— 大头针落下后定位即改到那里；
 4. 点右上角"恢复真实定位"回到真实 GPS。
 
-【要求】macOS 14 或更高；Apple Silicon（M 系列）Mac。
+【要求】macOS 15.0 或更高；Apple Silicon（M 系列）Mac。
 【许可】GPL-3.0，第三方组件见包内 NOTICE.md。
 NOTE
 
 # DMG 优先；若环境不允许创建磁盘镜像（沙箱/无权限），自动回落 ZIP。
 # 两条路都能拿到同样的 .app，ZIP 解压后拖进 Applications 即可。
-rm -f "$DMG" "$DIST/LocPilot-${VERSION}-arm64.zip"
+rm -f "$DMG" "$DIST/LocPilot-${VERSION}-macOS15-arm64.zip"
 ARTIFACT=""
 if hdiutil create -volname "LocPilot" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null 2>&1; then
   ARTIFACT="$DMG"
@@ -100,7 +106,7 @@ else
   # 回落：直接打包 .app 本体 —— 压缩包顶层就是 LocPilot.app，解压后拖进 Applications 即可。
   # 用 --norsrc --noextattr 去掉 AppleDouble/资源叉噪声，签名靠包内 _CodeSignature 仍然有效
   # （下面的“分发级验证”会解压后复核签名与自检，签名一旦失效这里就会报错）。
-  ZIP="$DIST/LocPilot-${VERSION}-arm64.zip"
+  ZIP="$DIST/LocPilot-${VERSION}-macOS15-arm64.zip"
   rm -f "$ZIP"
   ditto -c -k --norsrc --noextattr --keepParent "$APP" "$ZIP"
   # 安装说明作为独立文件放在压缩包旁边，不塞进 zip 里，避免多一层目录
@@ -133,12 +139,17 @@ codesign --verify --strict "$VERIFY_APP" >/dev/null 2>&1 && echo "    ✓ 解压
 "$VERIFY_APP/Contents/MacOS/LocPilot" --selftest > "$VERIFY_DIR/selftest.json" 2>"$VERIFY_DIR/selftest.err" &
 SPID=$!
 for _ in $(seq 1 60); do sleep 1; kill -0 $SPID 2>/dev/null || break; done
-kill -9 $SPID 2>/dev/null || true
+# 只清理本次自检派生的后端进程。原脚本这里是全局 `pkill -f "locpilot serve"`，
+# 会连带杀掉用户自己正在用的 LocPilot 会话（别的端口/别的工作目录），
+# 所以改成按父子关系精确清理：先记子进程，再杀父，最后逐个收尾。
+CHILDREN="$(pgrep -P "$SPID" 2>/dev/null || true)"
+kill -9 "$SPID" 2>/dev/null || true
+for child in $CHILDREN; do kill -9 "$child" 2>/dev/null || true; done
+unset CHILDREN
 if grep -q '"healthy"[[:space:]]*:[[:space:]]*true' "$VERIFY_DIR/selftest.json" 2>/dev/null; then
   echo "    ✓ 独立副本可自检通过（后端健康）"
   grep -o '"engines"[^,]*' "$VERIFY_DIR/selftest.json" | head -1 | sed 's/^/      /'
 else
   echo "    ✗ 独立副本自检失败：" >&2; tail -3 "$VERIFY_DIR/selftest.json" "$VERIFY_DIR/selftest.err" 2>/dev/null >&2
 fi
-pkill -9 -f "locpilot serve" 2>/dev/null || true
 rm -rf "$VERIFY_DIR"

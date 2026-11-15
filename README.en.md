@@ -2,7 +2,7 @@
 
 > Click anywhere on the map, and your iPhone's location teleports there.
 
-**Native macOS app** (SwiftUI + MapKit + system Liquid Glass) · an [iAnyGo](https://www.tenorshare.com/products/ianygo.html)-style iOS virtual location tool · iOS 17+ over a RemoteXPC/DTX tunnel, **no sudo** by default · **no jailbreak required**
+**Native macOS app** (SwiftUI + MapKit + system material glass) · an [iAnyGo](https://www.tenorshare.com/products/ianygo.html)-style iOS virtual location tool · iOS 17+ over a RemoteXPC/DTX tunnel, **no sudo** by default · **no jailbreak required**
 
 [中文](README.md) | **English**
 
@@ -67,9 +67,11 @@ Shortcuts: **⌘K** connect · **⌘⇧K** disconnect · **⌘⇧C** restore rea
 
 ### Option A — Download and run (recommended, no build)
 
-**Requirements: an Apple Silicon (M1 / M2 / M3 / M4 …) Mac running macOS 26 or later** — this build targets the macOS 26 SDK so the system Liquid Glass appearance is enabled (an older SDK makes every system control fall back to the legacy look).
+**Requirements: an Apple Silicon (M1 / M2 / M3 / M4 …) Mac running macOS 15.0 or later** — this build targets the macOS 15 SDK.
 
-1. Open **[Releases](../../releases/latest)** and download `LocPilot-1.0.2-arm64.zip` (~470 KB)
+> **macOS 15 compatibility branch (local build)**: upstream pins the deployment target at 26 to enable system Liquid Glass. This branch lowers it to 15.0 and implements `GlassChrome` with `.regularMaterial` instead (shape, blur, border, shadow and light/dark adaptation all kept; only the pointer-reactive highlight of the macOS 26 material is missing). The map, control cluster, coordinate readout and backend behaviour are unchanged.
+
+1. Open **[Releases](../../releases/latest)** and download `LocPilot-1.0.2-macOS15-arm64.dmg` (~720 KB)
 2. Unzip it and drag **LocPilot.app** into Applications
 3. **First launch**: this build is ad-hoc signed (not notarized), so Gatekeeper blocks the first double-click —
    right-click the app → **Open** → **Open** again; or run once:
@@ -81,7 +83,7 @@ Shortcuts: **⌘K** connect · **⌘⇧K** disconnect · **⌘⇧C** restore rea
 4. The engine is only needed to drive a **real** device: menu bar → *Engine → Install / Repair location engine…* (~40 MB, no sudo). Without it you can still explore the UI with the built-in mock device
 5. Connect the iPhone over USB, tap "Trust This Computer", enable Developer Mode, click the phone icon in the top-right, then **click anywhere on the map** — the location moves there once the pin lands
 
-> Verify the download: `shasum -a 256 LocPilot-1.0.2-arm64.zip` should match the SHA-256 shown on the Release page.
+> Verify the download: `shasum -a 256 LocPilot-1.0.2-macOS15-arm64.dmg` should match the SHA-256 shown on the Release page.
 
 ### Option B — Build from source
 
@@ -160,7 +162,7 @@ macos/                     native app (SwiftPM project, command-line build, no X
     LocPilotApp.swift        app entry, menus, splash screen, --selftest entry
     AppState.swift           single source of truth (connection state / position / camera), @Published drives the UI
     MapScreen.swift          MapKit map + click-to-teleport + coordinate readout
-    ControlsCluster.swift    top-right glass control cluster (system .glassEffect, material fallback on older systems)
+    ControlsCluster.swift    top-right glass control cluster (.regularMaterial glass, macOS 15 compatible)
     WindowConfigurator.swift full-bleed window (window changes deferred to the next runloop to avoid layout-time crashes)
 locpilot/                  Python backend (driven by the app over HTTP, also usable standalone)
   cli.py / server.py / api.py / config.py
@@ -195,7 +197,7 @@ bash macos/build.sh --selftest
 bash macos/dist.sh
 ```
 
-Artifacts land in `macos/build/dist/`: `LocPilot-<version>-arm64.zip` + `.sha256` + install notes (DMG when the environment allows creating a disk image, automatic ZIP fallback otherwise).
+Artifacts land in `macos/build/dist/`: `LocPilot-<version>-macOS15-arm64.dmg` + `.sha256` (install notes inside the DMG; falls back to `-macOS15-arm64.zip` when no disk image can be created).
 The script enforces an arm64 binary and no local absolute paths inside the bundle, re-signs ad-hoc after touching Info.plist, then extracts the artifact to a scratch directory to re-verify the signature and `--selftest`.
 
 > On a Mac with only Command Line Tools (no Xcode): `swift test` is unavailable (no XCTest), and SwiftUI macros such as `@State` cannot be used;

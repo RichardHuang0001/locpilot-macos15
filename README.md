@@ -2,12 +2,12 @@
 
 > 点一下地图，把 iPhone 的定位传送到那里。
 
-**原生 macOS App**（SwiftUI + MapKit + 系统 Liquid Glass）· 类 [iAnyGo](https://www.tenorshare.com/products/ianygo.html) 的 iOS 虚拟定位工具 · iOS 17+ 走 RemoteXPC/DTX 隧道、默认**免 sudo** · **无需越狱**
+**原生 macOS App**（SwiftUI + MapKit + 系统材质玻璃）· 类 [iAnyGo](https://www.tenorshare.com/products/ianygo.html) 的 iOS 虚拟定位工具 · iOS 17+ 走 RemoteXPC/DTX 隧道、默认**免 sudo** · **无需越狱**
 
 **中文** | [English](README.en.md)
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)
-![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%2015%2B-lightgrey.svg)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776ab.svg)
 ![Status](https://img.shields.io/badge/status-v1.0.2-brightgreen.svg)
 
@@ -67,9 +67,11 @@ LocPilot 把「我这台 iPhone 现在在哪」变成地图上随手一点的事
 
 ### 方式 A：直接下载使用（推荐，免构建）
 
-**要求：Apple Silicon（M1 / M2 / M3 / M4 …）Mac + macOS 26 或更高** —— 本版以 macOS 26 SDK 构建，才能启用系统 Liquid Glass 新外观（用更低 SDK 构建会整体回落到旧版控件样式）。
+**要求：Apple Silicon（M1 / M2 / M3 / M4 …）Mac + macOS 15.0 或更高** —— 本分支以 macOS 15 SDK 构建，上限不受 macOS 26 限制。
 
-1. 打开 **[Releases](../../releases/latest)**，下载 `LocPilot-1.0.2-arm64.zip`（约 470 KB）
+> **macOS 15 兼容分支（本地构建）**：原版把部署目标钉在 26 是为了启用系统 Liquid Glass。本分支把部署目标降到 15.0，`GlassChrome` 改为 `.regularMaterial` 实现（形状、毛玻璃、描边、阴影、深浅色自适应全部保留，只少了 macOS 26 材质本身自带的指针交互高光）。地图、控件簇、坐标读数和后端行为均未改动。
+
+1. 打开 **[Releases](../../releases/latest)**，下载 `LocPilot-1.0.2-macOS15-arm64.dmg`（约 720 KB）
 2. 解压，把 **LocPilot.app** 拖进「应用程序」
 3. **首次打开**：本版为 ad-hoc 签名（未做 Apple 公证），双击会被 Gatekeeper 拦一次 ——
    右键点 App →「打开」→ 弹窗里再点「打开」；或执行一次：
@@ -83,7 +85,7 @@ LocPilot 把「我这台 iPhone 现在在哪」变成地图上随手一点的事
 5. USB 连上 iPhone → 手机上点「信任此电脑」并开启开发者模式 → 点右上角手机图标连接 →
    **在地图上点一下**，大头针落下后定位即改到那里
 
-> 包完整性校验：`shasum -a 256 LocPilot-1.0.2-arm64.zip`，结果应与 Release 页里的 SHA-256 一致。
+> 包完整性校验：`shasum -a 256 LocPilot-1.0.2-macOS15-arm64.dmg`，结果应与 Release 页里的 SHA-256 一致。
 
 ### 方式 B：从源码构建
 
@@ -162,7 +164,7 @@ macos/                     原生 App（SwiftPM 工程，命令行可构建，�
     LocPilotApp.swift        App 入口、菜单、启动画面、--selftest 入口
     AppState.swift           唯一状态源（连接状态 / 位置 / 相机），@Published 驱动界面
     MapScreen.swift          MapKit 地图 + 点击传送 + 坐标读数
-    ControlsCluster.swift    右上玻璃控件簇（系统 .glassEffect，旧系统回落材质）
+    ControlsCluster.swift    右上玻璃控件簇（.regularMaterial 玻璃，macOS 15 兼容）
     WindowConfigurator.swift 全面屏窗口（推迟到下一 runloop 改窗口，避免布局期崩溃）
 locpilot/                    Python 后端（App 通过 HTTP 驱动，也可独立使用）
   cli.py / server.py / api.py / config.py
@@ -197,7 +199,7 @@ bash macos/build.sh --selftest
 bash macos/dist.sh
 ```
 
-产物在 `macos/build/dist/`：`LocPilot-<版本>-arm64.zip` + `.sha256` + `安装说明.txt`（优先出 DMG，环境不允许创建磁盘镜像时自动回落 ZIP）。
+产物在 `macos/build/dist/`：`LocPilot-<版本>-macOS15-arm64.dmg` + `.sha256`（DMG 内含 `安装说明.txt`；环境不允许创建磁盘镜像时自动回落 `-macOS15-arm64.zip`）。
 打包脚本会强制校验架构为 arm64、包内不含本机绝对路径，改过 Info.plist 后重新 ad-hoc 签名，最后解压到独立目录复核签名与 `--selftest`。
 
 > 本机若只装了 Command Line Tools（无 Xcode）：`swift test` 不可用（没有 XCTest），也不能用 `@State` 等 SwiftUI 宏；

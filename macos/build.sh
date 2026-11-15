@@ -27,7 +27,7 @@ SCRATCH="$MACOS_DIR/.build"          # SwiftPM scratch 与各类缓存，全部�
 CONFIG="release"
 PRODUCT="LocPilot"
 BUNDLE_ID="com.locpilot.desktop"
-MIN_MACOS="26.0"                     # 与 Package.swift 的 platforms: [.macOS("26.0")] 一致（决定外观 SDK）
+MIN_MACOS="15.0"                     # 与 Package.swift 的 platforms: [.macOS("15.0")] 一致（macOS 15 兼容分支）
 
 RUN=0; SMOKE=0; SELFTEST=0; CHECK=0; NOBUILD=0
 

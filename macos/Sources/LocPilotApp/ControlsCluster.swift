@@ -178,19 +178,20 @@ private struct CapsuleButton: View {
 
 // MARK: - 玻璃材质
 
-/// 系统玻璃容器：macOS 26 起用真正的 Liquid Glass，否则回落到材质。
-/// 形状由调用方决定：独立控件用圆形，成组动作用胶囊。
+/// 系统玻璃容器：形状由调用方决定 —— 独立控件用圆形，成组动作用胶囊。
+///
+/// macOS 15 兼容分支说明：原版在 macOS 26 SDK 上用 `glassEffect(.regular.interactive(), in:)`
+/// 实现真正的 Liquid Glass。该符号在 macOS 15 SDK 中**完全不存在**（不是运行时可用性问题），
+/// 放进 `#available` 里也照样编译失败，所以这里直接去掉，统一用 `.regularMaterial` 实现：
+/// 圆形/胶囊形状、毛玻璃背景、深浅色模式自适应、描边与阴影都保留，
+/// 只有"跟着指针轻微折射/高光"这一项外观能力天然缺失（那是 macOS 26 的系统材质本身）。
 struct GlassChrome<S: InsettableShape>: ViewModifier {
     let shape: S
 
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(.regular.interactive(), in: shape)
-        } else {
-            content
-                .background(.regularMaterial, in: shape)
-                .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
-        }
+        content
+            .background(.regularMaterial, in: shape)
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
     }
 }
