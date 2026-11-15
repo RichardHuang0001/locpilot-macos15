@@ -6,6 +6,9 @@
 
 一句话：让 LocPilot 能在 **macOS 15（Sequoia）** 上编译、双击运行，并把几个实际使用中卡手的地方修掉。
 
+[**下载 v1.0.2-macOS15**](https://github.com/RichardHuang0001/locpilot-macos15/releases/tag/v1.0.2-macos15) ·
+macOS 15.0+ / Apple Silicon · 约 800 KB · GPL-3.0
+
 ---
 
 ## 一、为什么要这个分支
@@ -69,7 +72,12 @@
 
 ### 直接用（Apple Silicon + macOS 15.0+）
 
-从 Releases 下载 `LocPilot-1.0.2-macOS15-arm64.dmg`，拖进「应用程序」。
+**[⬇︎ LocPilot-1.0.2-macOS15-arm64.dmg](https://github.com/RichardHuang0001/locpilot-macos15/releases/download/v1.0.2-macos15/LocPilot-1.0.2-macOS15-arm64.dmg)**（约 800 KB）
+
+SHA-256：`1c78d495461d38232ea33589e98771c6b570e72028b3f9b01a1b875566d671f7`
+（同名 `.sha256` 文件也在 Release 里；下载后可自行核对）
+
+下载后打开 DMG，把 **LocPilot.app** 拖进右侧的「应用程序」文件夹。
 
 首次打开会被 Gatekeeper 拦一次（ad-hoc 签名、无公证）：
 
