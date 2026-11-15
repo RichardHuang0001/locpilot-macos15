@@ -124,6 +124,16 @@ public actor EngineClient {
         return envelope.result
     }
 
+    /// 地点搜索：/api/search?q=…&limit=… → {"results": [...]}。后端走 Nominatim，带缓存与限速。
+    public func search(_ query: String, limit: Int = 8) async throws -> [SearchHit] {
+        // 只保留安全的查询字符：'&' '?' '#' 不转义会让参数被截断
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=?#")
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        struct Envelope: Decodable { let results: [SearchHit] }
+        return try await send("api/search?q=\(encoded)&limit=\(limit)", as: Envelope.self).results
+    }
+
     public func clear() async throws {
         _ = try await send("api/clear", method: "POST", body: [:], as: EmptyResponse.self)
     }
@@ -202,10 +212,45 @@ public struct Place: Decodable, Sendable {
     public var shortLabel: String? { label ?? name ?? displayName }
 }
 
+/// /api/search 的单条结果。与 Place 的区别是**必须带坐标** —— 搜到就要能跳过去。
+public struct SearchHit: Decodable, Sendable, Identifiable {
+    public let name: String?
+    public let displayName: String?
+    public let lat: Double
+    public let lon: Double
+    public let type: String?
+    public let category: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, lat, lon, type, category
+        case displayName = "display_name"
+    }
+
+    /// 同一地点可能重名，用坐标 + 名称做稳定身份，避免 ForEach 复用错行。
+    public var id: String { "\(lat),\(lon),\(name ?? "")" }
+
+    /// 列表主行：优先 POI 名，没有就取地址的第一段。
+    public var title: String {
+        if let name, !name.isEmpty { return name }
+        if let displayName, !displayName.isEmpty {
+            return displayName.split(separator: ",").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? displayName
+        }
+        return "未命名地点"
+    }
+
+    /// 列表副行：完整地址，去掉与主行重复的开头，省得一行里同一个词出现两次。
+    public var subtitle: String? {
+        guard let displayName, !displayName.isEmpty else { return nil }
+        guard displayName.hasPrefix(title) else { return displayName }
+        let rest = displayName.dropFirst(title.count)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ",， "))
+        return rest.isEmpty ? nil : rest
+    }
+}
+
 /// 后端错误体：{"ok": false, "error": "..."}
 struct BackendErrorBody: Decodable {
-    let error: String?
-}
+    let error: String?}
 
 public enum EngineError: LocalizedError {
     case badURL(String)

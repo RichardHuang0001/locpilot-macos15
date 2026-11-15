@@ -38,6 +38,15 @@ struct MapScreen: View {
                 TitlebarDragArea { state.setTitlebarHovered($0) }
                     .frame(height: TitlebarVeil.height)   // 与悬停条同高：整条都能拖窗口
             }
+            // 搜索面板压到标题栏下方：左上角是红绿灯，从 14pt 起会盖住窗口按钮。
+            .overlay(alignment: .topLeading) {
+                if state.searchActive {
+                    SearchPanel()
+                        .padding(.leading, SearchPanel.leadingInset)
+                        .padding(.top, SearchPanel.topInset)
+                        .transition(.opacity.combined(with: .offset(y: -6)))
+                }
+            }
             // 设备图标中心与红绿灯中心对齐（都在距顶 22pt），悬停条以这条线上下等长；
             // 下面的定位/缩放胶囊自然落在悬停条之外，不侵占它。
             .overlay(alignment: .topTrailing) {

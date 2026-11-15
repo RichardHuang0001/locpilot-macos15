@@ -35,6 +35,13 @@ struct LocPilotApp: App {
                     .keyboardShortcut("c", modifiers: [.command, .shift])
             }
 
+            CommandMenu("地图") {
+                Button(state.searchActive ? "关闭搜索" : "搜索地点…") {
+                    withAnimation(.easeOut(duration: 0.18)) { state.toggleSearch() }
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
+
             CommandMenu("引擎") {
                 Button("安装 / 修复定位引擎…") { state.showInstaller = true }
                 Button("打开状态目录") { NSWorkspace.shared.open(BackendController.appSupport) }

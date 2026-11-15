@@ -33,6 +33,7 @@ struct ControlsCluster: View {
         // 右边缘对不齐 —— 看起来就是图标没跟下面的胶囊在同一列上。
         VStack(alignment: .trailing, spacing: 10) {
             StatusButton()
+            SearchCapsule()
             MapActionCapsule()
             ZoomCapsule()
         }
@@ -73,20 +74,40 @@ private struct DevicePopover: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(state.statusColor)
-                .frame(width: 8, height: 8)
-                .shadow(color: state.statusColor.opacity(0.8), radius: 4)
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            action
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(state.statusColor)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: state.statusColor.opacity(0.8), radius: 4)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                action
+            }
+            // 连接失败时把后端原文显示出来。后端那句话里带着"该动哪一步"，
+            // 只写进日志等于没提示（实测踩过：提示指向开发者模式，用户照做重启后仍然连不上，
+            // 因为真实原因是开发者镜像没挂上 —— 界面上什么都没说）。
+            if let detail = failureDetail {
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)      // 允许复制，方便贴给别人排查
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: 208)
+        .frame(width: failureDetail == nil ? 208 : 268)
+    }
+
+    /// 只在"确实失败了"的时候取原因：离线是常态，不该弹一段红字吓人。
+    private var failureDetail: String? {
+        guard case .failed = state.connection,
+              let text = state.lastError?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        return text
     }
 
     @ViewBuilder private var action: some View {
@@ -114,6 +135,25 @@ private struct DevicePopover: View {
         case .connecting: return "正在连接…"
         default: return "设备未连接"
         }
+    }
+}
+
+// MARK: - 搜索（单按钮胶囊）
+
+/// 单独一条的原因：搜索结果面板在左上角，按钮留在右上控件簇里，
+/// 与"定位 / 缩放"这类地图动作同组，但只有一颗按钮，不必凑成两格。
+private struct SearchCapsule: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        CapsuleButton(
+            systemName: "magnifyingglass",
+            help: state.searchActive ? "关闭搜索（⌘F / Esc）" : "搜索地点（⌘F）",
+            tint: state.searchActive ? Color.accentColor : Color.primary
+        ) {
+            withAnimation(.easeOut(duration: 0.18)) { state.toggleSearch() }
+        }
+        .modifier(GlassChrome(shape: Capsule()))
     }
 }
 

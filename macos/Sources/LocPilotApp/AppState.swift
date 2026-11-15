@@ -366,6 +366,109 @@ final class AppState: ObservableObject {
 
     private var currentSpanMeters: Double { visibleRegion.span.latitudeDelta * 111_000 }
 
+    // MARK: - 地点搜索
+
+    /// 搜索面板显隐：⌘F 或右上控件簇的放大镜切换。
+    @Published var searchActive = false
+    @Published var searchQuery = ""
+    @Published private(set) var searchResults: [SearchHit] = []
+    @Published private(set) var searchError: String?
+    @Published private(set) var searching = false
+
+    private var searchTask: Task<Void, Never>?
+
+    func toggleSearch() {
+        searchActive.toggle()
+        if !searchActive { clearSearch() }
+    }
+
+    func closeSearch() {
+        guard searchActive else { return }
+        searchActive = false
+        clearSearch()
+    }
+
+    func clearSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        searchQuery = ""
+        searchResults = []
+        searchError = nil
+        searching = false
+    }
+
+    /// 输入变化时调用，300ms 防抖。Nominatim 对匿名调用有限速，逐字发请求会被它拒掉。
+    func searchQueryDidChange() {
+        searchTask?.cancel()
+        let keyword = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else {
+            searchResults = []
+            searchError = nil
+            searching = false
+            return
+        }
+        searching = true
+        searchError = nil
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard let client = self.client else {
+                self.searching = false
+                self.searchError = "后端尚未就绪"
+                return
+            }
+            do {
+                let hits = try await client.search(keyword, limit: 12)
+                guard !Task.isCancelled else { return }
+                // 等待期间用户又改了输入：这次结果已经过期，直接丢弃
+                guard self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == keyword else { return }
+                // 先去重再截断，否则前 8 条被同一个地点占满，列表还是只剩一项
+                self.searchResults = Array(Self.dedupe(hits).prefix(8))
+                self.searchError = self.searchResults.isEmpty ? "没找到「" + keyword + "」" : nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.searchResults = []
+                self.searchError = "搜索失败：" + error.localizedDescription
+            }
+            self.searching = false
+        }
+    }
+
+    /// 合并 Nominatim 的重复条目。
+    ///
+    /// 同一个地点常被拆成好几条（坐标只差几十米，名字完全一样），
+    /// 实测搜「深圳北站」返回 6 条里 5 条是同一个地方 —— 列表照原样铺开等于没做筛选。
+    /// 规则：名称相同且相距 < 300m 视为同一条，保留第一条。
+    static func dedupe(_ hits: [SearchHit]) -> [SearchHit] {
+        var kept: [SearchHit] = []
+        for hit in hits {
+            let isDuplicate = kept.contains { other in
+                other.title == hit.title && distance(other, hit) < 300
+            }
+            if !isDuplicate { kept.append(hit) }
+        }
+        return kept
+    }
+
+    private static func distance(_ a: SearchHit, _ b: SearchHit) -> Double {
+        let dLat = (a.lat - b.lat) * 111_000
+        let dLon = (a.lon - b.lon) * 111_000 * cos(a.lat * .pi / 180)
+        return (dLat * dLat + dLon * dLon).squareRoot()
+    }
+
+    /// 选中一条结果：先把镜头带过去，再落针下发。
+    /// 顺序重要 —— 没连设备时下发会失败，但用户至少能看到地点在哪。
+    func choose(_ hit: SearchHit) async {
+        let span = max(currentSpanMeters, 2_000)
+        moveCamera(MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: hit.lat, longitude: hit.lon),
+            latitudinalMeters: span,
+            longitudinalMeters: span))
+        searchActive = false
+        clearSearch()
+        await selectLocation(lat: hit.lat, lon: hit.lon)
+    }
+
     // MARK: - 提示
 
     private func flash(_ text: String) {

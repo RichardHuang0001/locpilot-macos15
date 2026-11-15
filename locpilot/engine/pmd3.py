@@ -464,10 +464,18 @@ class PyMobileDevice3Engine(Engine):
         """把底层异常翻译成用户能照着做的提示。"""
         text = str(exc)
         if "dtservicehub" in text or "InvalidServiceError" in text:
+            # 注意：设备"不提供 dtservicehub"有两种成因，不能只归咎于开发者模式，
+            # 否则用户按提示开启开发者模式后仍看到同一句话，会陷入死循环（实测踩过）：
+            #   ① 开发者模式没开；
+            #   ② 开发者模式已开，但 Personalized DDI（开发者镜像）没挂上 ——
+            #      手机每次重启后都要重新挂，首次挂载要联网下载，耗时十几秒到一分钟。
             return EngineError(
-                "设备（iOS %s）未开启开发者模式，DVT 服务不可用。请在 iPhone 上开启："
-                "设置 → 隐私与安全性 → 开发者模式（开启后需重启并输入锁屏密码），"
-                "或执行 idevicedevmodectl enable；随后重试连接。" % (device.ios_version or "?",)
+                "设备（iOS %s）没有提供 DVT 服务。原因通常是两者之一：\n"
+                "① 开发者模式未开启 —— iPhone：设置 → 隐私与安全性 → 开发者模式"
+                "（开启后需重启并输入锁屏密码一次）；\n"
+                "② 开发者模式已开，但开发者镜像还没挂上 —— 手机重启后需重新挂载，"
+                "首次要联网下载，等十几秒后「再点一次连接」即可。\n"
+                "手动挂载：pymobiledevice3 mounter auto-mount" % (device.ios_version or "?",)
             )
         if "tunnel" in text.lower() or "rsd" in text.lower():
             return EngineError(
