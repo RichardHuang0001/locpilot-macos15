@@ -125,12 +125,12 @@ public actor EngineClient {
     }
 
     /// 地点搜索：/api/search?q=…&limit=… → {"results": [...]}。后端走 Nominatim，带缓存与限速。
-    public func search(_ query: String, limit: Int = 8) async throws -> [SearchHit] {
+    public func search(_ query: String, limit: Int = 8) async throws -> [RemoteSearchHit] {
         // 只保留安全的查询字符：'&' '?' '#' 不转义会让参数被截断
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&+=?#")
         let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
-        struct Envelope: Decodable { let results: [SearchHit] }
+        struct Envelope: Decodable { let results: [RemoteSearchHit] }
         return try await send("api/search?q=\(encoded)&limit=\(limit)", as: Envelope.self).results
     }
 
@@ -212,8 +212,9 @@ public struct Place: Decodable, Sendable {
     public var shortLabel: String? { label ?? name ?? displayName }
 }
 
-/// /api/search 的单条结果。与 Place 的区别是**必须带坐标** —— 搜到就要能跳过去。
-public struct SearchHit: Decodable, Sendable, Identifiable {
+/// /api/search 的单条结果（兜底数据源）。与 Place 的区别是**必须带坐标** —— 搜到就要能跳过去。
+/// 注意：正常搜索走本地 `MKLocalSearch`，这里只在前者为空时启用。
+public struct RemoteSearchHit: Decodable, Sendable {
     public let name: String?
     public let displayName: String?
     public let lat: Double

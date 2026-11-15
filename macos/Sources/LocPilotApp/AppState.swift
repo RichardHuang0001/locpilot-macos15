@@ -323,9 +323,47 @@ final class AppState: ObservableObject {
             await pin.succeed()          // 成功反馈只由大头针变绿 + ✓ 表达
         } catch {
             guard token == selectionID, !Task.isCancelled, !(error is CancellationError) else { return }
+            // 设备锁屏、切到别的 App、隧道抖动，都会让 DVT 会话**静默**失效，
+            // 表现就是"刚才还好好的，忽然点不动了" —— 这是用户说的"不稳定"。
+            // 先原样重试一次（多数是瞬时抖动）；仍失败就重建会话再试，
+            // 而不是让用户自己发现要去点"重新连接"。
+            if await retryTeleport(lat: lat, lon: lon, token: token) {
+                await pin.succeed()
+                return
+            }
             log("传送失败: \(error.localizedDescription)")
             flash("传送失败")
             await pin.fail()
+        }
+    }
+
+    /// 失败自愈：先重试一次，仍失败则重建会话后再试一次。
+    private func retryTeleport(lat: Double, lon: Double, token: UUID) async -> Bool {
+        for attempt in 0..<2 {
+            guard token == selectionID, !Task.isCancelled else { return false }
+            if attempt == 1, await rebuildSession() == false { return false }
+            if (try? await performTeleport(lat: lat, lon: lon, selection: token)) != nil { return true }
+        }
+        return false
+    }
+
+    /// 重建与设备的会话（断开 → 重连）。连不上就如实写回状态，不假装成功。
+    private func rebuildSession() async -> Bool {
+        guard let client else { return false }
+        log("会话可能已失效，正在重建…")
+        try? await client.disconnect()
+        do {
+            let result = try await client.connect(engine: Self.preferredEngine)
+            deviceName = result.device?.name
+            connection = .online
+            lastError = nil
+            log("会话已重建: \(result.device?.name ?? "-")")
+            return true
+        } catch {
+            connection = .failed(error.localizedDescription)
+            lastError = error.localizedDescription
+            log("重建会话失败: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -371,7 +409,7 @@ final class AppState: ObservableObject {
     /// 搜索面板显隐：⌘F 或右上控件簇的放大镜切换。
     @Published var searchActive = false
     @Published var searchQuery = ""
-    @Published private(set) var searchResults: [SearchHit] = []
+    @Published private(set) var searchResults: [SearchItem] = []
     @Published private(set) var searchError: String?
     @Published private(set) var searching = false
 
@@ -397,7 +435,7 @@ final class AppState: ObservableObject {
         searching = false
     }
 
-    /// 输入变化时调用，300ms 防抖。Nominatim 对匿名调用有限速，逐字发请求会被它拒掉。
+    /// 输入变化时调用，280ms 防抖：`MKLocalSearch` 每次都是一趟网络往返，逐字发没意义。
     func searchQueryDidChange() {
         searchTask?.cancel()
         let keyword = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -410,47 +448,47 @@ final class AppState: ObservableObject {
         searching = true
         searchError = nil
         searchTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            try? await Task.sleep(nanoseconds: 280_000_000)
             guard !Task.isCancelled, let self else { return }
-            guard let client = self.client else {
-                self.searching = false
-                self.searchError = "后端尚未就绪"
-                return
+
+            // 1) 首选系统地图（国内为高德数据）：POI 密度和地图上看到的一致
+            var items = await LocalPlaceSearch.search(keyword, in: self.visibleRegion)
+            guard !Task.isCancelled else { return }
+            guard self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == keyword else { return }
+
+            // 2) 兜底：系统一条都没给时才问后端（OSM），避免两个数据源混排、质量参差
+            if items.isEmpty, let client = self.client,
+               let remote = try? await client.search(keyword, limit: 10) {
+                items = remote.map { hit in
+                    let title = (hit.name?.isEmpty == false ? hit.name : hit.displayName) ?? "未命名地点"
+                    let subtitle = hit.displayName.flatMap { $0 == title ? nil : $0 }
+                    return SearchItem(title: title, subtitle: subtitle, lat: hit.lat, lon: hit.lon)
+                }
             }
-            do {
-                let hits = try await client.search(keyword, limit: 12)
-                guard !Task.isCancelled else { return }
-                // 等待期间用户又改了输入：这次结果已经过期，直接丢弃
-                guard self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == keyword else { return }
-                // 先去重再截断，否则前 8 条被同一个地点占满，列表还是只剩一项
-                self.searchResults = Array(Self.dedupe(hits).prefix(8))
-                self.searchError = self.searchResults.isEmpty ? "没找到「" + keyword + "」" : nil
-            } catch {
-                guard !Task.isCancelled else { return }
-                self.searchResults = []
-                self.searchError = "搜索失败：" + error.localizedDescription
-            }
+
+            guard !Task.isCancelled else { return }
+            guard self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == keyword else { return }
+            self.searchResults = Array(Self.dedupe(items).prefix(8))
+            self.searchError = self.searchResults.isEmpty ? "没找到「" + keyword + "」" : nil
             self.searching = false
         }
     }
 
-    /// 合并 Nominatim 的重复条目。
-    ///
-    /// 同一个地点常被拆成好几条（坐标只差几十米，名字完全一样），
-    /// 实测搜「深圳北站」返回 6 条里 5 条是同一个地方 —— 列表照原样铺开等于没做筛选。
-    /// 规则：名称相同且相距 < 300m 视为同一条，保留第一条。
-    static func dedupe(_ hits: [SearchHit]) -> [SearchHit] {
-        var kept: [SearchHit] = []
-        for hit in hits {
+    /// 合并同名且挨在一起的条目。
+    /// 系统地图也会把同一个商场（不同出入口、不同楼层）拆成多条，
+    /// 名称相同且相距 < 250m 视为同一条，保留第一条。
+    static func dedupe(_ items: [SearchItem]) -> [SearchItem] {
+        var kept: [SearchItem] = []
+        for item in items {
             let isDuplicate = kept.contains { other in
-                other.title == hit.title && distance(other, hit) < 300
+                other.title == item.title && distance(other, item) < 250
             }
-            if !isDuplicate { kept.append(hit) }
+            if !isDuplicate { kept.append(item) }
         }
         return kept
     }
 
-    private static func distance(_ a: SearchHit, _ b: SearchHit) -> Double {
+    private static func distance(_ a: SearchItem, _ b: SearchItem) -> Double {
         let dLat = (a.lat - b.lat) * 111_000
         let dLon = (a.lon - b.lon) * 111_000 * cos(a.lat * .pi / 180)
         return (dLat * dLat + dLon * dLon).squareRoot()
@@ -458,15 +496,15 @@ final class AppState: ObservableObject {
 
     /// 选中一条结果：先把镜头带过去，再落针下发。
     /// 顺序重要 —— 没连设备时下发会失败，但用户至少能看到地点在哪。
-    func choose(_ hit: SearchHit) async {
+    func choose(_ item: SearchItem) async {
         let span = max(currentSpanMeters, 2_000)
         moveCamera(MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: hit.lat, longitude: hit.lon),
+            center: CLLocationCoordinate2D(latitude: item.lat, longitude: item.lon),
             latitudinalMeters: span,
             longitudinalMeters: span))
         searchActive = false
         clearSearch()
-        await selectLocation(lat: hit.lat, lon: hit.lon)
+        await selectLocation(lat: item.lat, lon: item.lon)
     }
 
     // MARK: - 提示

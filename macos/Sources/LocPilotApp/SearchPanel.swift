@@ -1,12 +1,11 @@
-import LocPilotKit
 import SwiftUI
 
 /// 地点搜索面板：一个输入框 + 结果列表，浮在地图左上角。
 ///
 /// 设计约束（沿用项目既有风格）：
 /// * 只用一套玻璃材质（`GlassChrome`），不引入第二种视觉语言；
-/// * 不新起网络栈 —— 直接打后端现成的 `/api/search`（Nominatim，带缓存与限速）；
-/// * 每条结果都能"跳过去"，所以必须带坐标（`SearchHit`）。
+/// * 搜索走系统地图 `MKLocalSearch`（国内为高德数据），后端 `/api/search` 仅作兜底；
+/// * 每条结果都能"跳过去"，所以必须带坐标（`SearchItem`）。
 ///
 /// 位置刻意压在标题栏下方 58pt：左上角是红绿灯（x 9–70、中心 y≈26），
 /// 面板若从 14pt 起会把窗口按钮盖住，用户就关不掉窗口了。
@@ -88,9 +87,9 @@ struct SearchPanel: View {
     /// 结果已经去重且最多 8 条，直接按内容排，面板自然贴合。
     private var results: some View {
         VStack(spacing: 0) {
-            ForEach(state.searchResults) { hit in
-                SearchRow(hit: hit) {
-                    Task { await state.choose(hit) }
+            ForEach(state.searchResults) { item in
+                SearchRow(item: item) {
+                    Task { await state.choose(item) }
                 }
             }
             if let message = state.searchError {
@@ -108,7 +107,7 @@ struct SearchPanel: View {
 // MARK: - 单条结果
 
 private struct SearchRow: View {
-    let hit: SearchHit
+    let item: SearchItem
     let action: () -> Void
 
     @State private var hovering = false
@@ -116,10 +115,10 @@ private struct SearchRow: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(hit.title)
+                Text(item.title)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
-                if let subtitle = hit.subtitle {
+                if let subtitle = item.subtitle {
                     Text(subtitle)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
@@ -139,6 +138,6 @@ private struct SearchRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(hit.subtitle ?? hit.title)
+        .help(item.subtitle ?? item.title)
     }
 }
