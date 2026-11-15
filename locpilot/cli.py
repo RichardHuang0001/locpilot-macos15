@@ -89,8 +89,9 @@ def cmd_serve(args) -> int:
         _start_parent_watch(session)
     port = args.port or (config.DEFAULT_PORT if args.port != 0 else find_free_port())
     server = LocPilotServer(session, host=args.host, port=port, token=args.token)
-    if os.environ.get("LOCPILOT_PMD3_INPROC") == "1":
-        threading.Thread(target=_warm_engine_stack, name="locpilot-warm", daemon=True).start()
+    # 注意：这里**故意不**再起预热线程。
+    # 实测预热线程与"连接"会抢同一个 Python 导入锁：两个线程同时 import pymobiledevice3
+    # 只能串行排队，反而把冷启动从 3.8s 拖到 4.5s。连接自己导入一次就够了。
     print("LocPilot %s 已启动: %s" % (config.VERSION, server.url))
     print("引擎: %s | 状态目录: %s" % (settings.get("engine", "auto"), config.data_dir()))
     if args.connect:

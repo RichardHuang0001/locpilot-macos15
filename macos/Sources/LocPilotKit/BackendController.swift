@@ -110,7 +110,10 @@ public final class BackendController: ObservableObject {
     }
 
     /// 引擎能力探测：该解释器能否 import pymobiledevice3。
-    public func hasEngine(_ python: String) -> Bool {
+    ///
+    /// nonisolated + static：内部要起一个子进程并等它退出（实测约 0.3s），
+    /// 放在 @MainActor 上会直接卡住界面与启动流程。
+    public nonisolated static func hasEngine(_ python: String) -> Bool {
         let probe = Process()
         probe.executableURL = URL(fileURLWithPath: python)
         probe.arguments = ["-c", "import pymobiledevice3, sys; sys.stdout.write('ok')"]
@@ -163,9 +166,22 @@ public final class BackendController: ObservableObject {
             return
         }
         pythonPath = python
-        engineReady = hasEngine(python)
+        engineReady = false
         port = pickFreePort(startingAt: 8799)
-        append("解释器: " + python + (engineReady ? "（含 pymobiledevice3 引擎）" : "（无 pymobiledevice3，仅 mock 引擎可用）"))
+        append("解释器: " + python)
+        // 探测要另起一个 Python 进程并导入 pymobiledevice3（约 0.3s）。
+        // 放到后台与"启动后端 + 连接设备"并行，不再排在用户等待的关键路径上；
+        // 结果只用于界面提示与 runtime.json 记录。
+        Task.detached(priority: .utility) { [weak self] in
+            let ready = Self.hasEngine(python)
+            await MainActor.run {
+                guard let self else { return }
+                self.engineReady = ready
+                self.append(ready
+                            ? "定位引擎可用：pymobiledevice3"
+                            : "未找到 pymobiledevice3；真机功能需先在「引擎」菜单里安装")
+            }
+        }
 
         var environment = ProcessInfo.processInfo.environment
         // 顺序即优先级：开发时 .app 位于仓库内 → 先用仓库源码（改完重启即生效）；
@@ -267,7 +283,7 @@ public final class BackendController: ObservableObject {
             } catch {
                 // 还没起来，继续等
             }
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: 100_000_000)   // 100ms：后端通常 0.6s 内就绪，没必要等半秒
         }
         phase = .failed("健康检查超时（" + String(Int(timeout)) + "s）")
         return false

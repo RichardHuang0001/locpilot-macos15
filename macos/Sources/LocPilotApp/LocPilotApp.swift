@@ -5,7 +5,8 @@ import SwiftUI
 @main
 struct LocPilotApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var state = AppState()
+    // 用单例而不是就地 new：AppDelegate 要在窗口创建前就启动后端（见 startBackendEarly）
+    @StateObject private var state = AppState.shared
 
     init() {
         // 无界面自检入口：LocPilot --selftest（供 build.sh / CI 断言用，不会创建窗口）
@@ -13,6 +14,11 @@ struct LocPilotApp: App {
             SelfTest.run()
         }
     }
+
+    /// 关窗口后是否继续驻留。开启后下次打开窗口是"接入已有会话"（约 0.3s），
+    /// 而不是重新起后端 + 导入 pymobiledevice3（约 3.1s）。
+    /// 默认关闭：多数人期望"关掉窗口就是退出"，必须让用户自己选。
+    @AppStorage("keepRunningAfterLastWindowClosed") private var keepRunning = false
 
     var body: some Scene {
         WindowGroup("LocPilot") {
@@ -33,6 +39,10 @@ struct LocPilotApp: App {
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                 Button("恢复真实定位") { Task { await state.clearLocation() } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(after: .appInfo) {
+                Toggle("关闭窗口后继续在后台运行（下次打开秒连）", isOn: $keepRunning)
             }
 
             CommandMenu("地图") {
@@ -102,12 +112,24 @@ struct SplashView: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var state: AppState?
 
+    /// 后端在 delegate 初始化时就拉起 —— 这是进程里最早的可用时机（早于窗口、早于 MapKit）。
+    /// 后端 0.6s 就绪 + 连接要等 Python 导入 1.4s，这两段必须和界面初始化重叠，
+    /// 否则用户要串行等完"界面出来"再等"连接完成"。
+    override init() {
+        super.init()
+        MainActor.assumeIsolated { AppState.shared.startBackendEarly() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// 开关打开时，关掉最后一个窗口只是收起界面，后端与设备会话保持存活，
+    /// 再次打开（点 Dock 或 ⌘Tab）就是"接入已有会话"，不必重付冷启动成本。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !UserDefaults.standard.bool(forKey: "keepRunningAfterLastWindowClosed")
+    }
 
     /// 再次双击 App（或点 Dock 图标）时，把已有窗口带到前台而不是"没反应"。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

@@ -78,6 +78,10 @@ final class AppState: ObservableObject {
 
     // 说明：连接失败的具体原因只写日志，不在界面上展示（用户要求界面极简）。
 
+    /// 单例：AppDelegate 需要在窗口创建前就拿到它并启动后端，
+    /// 所以不能再只依赖 SwiftUI 的 @StateObject 初始化时机。
+    static let shared = AppState()
+
     let backend = BackendController()
     let installer = EngineInstaller()
 
@@ -94,6 +98,14 @@ final class AppState: ObservableObject {
     // MARK: - 生命周期
 
     private var didBootstrap = false
+
+    /// 尽早拉起后端：在 window 创建前调用。
+    /// 后端要 0.6s 才 HTTP 就绪、连接还要再等 Python 导入 pymobiledevice3（约 1.4s），
+    /// 这些都该和"窗口 / MapKit 初始化"并行，而不是排在它后面。
+    func startBackendEarly() {
+        backend.start()
+        phase = backend.phase
+    }
 
     func bootstrap() async {
         // 只跑一次：SwiftUI 的 .task 在视图身份变化时会重启，
