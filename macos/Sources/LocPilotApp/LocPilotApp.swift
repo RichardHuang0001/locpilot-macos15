@@ -15,11 +15,6 @@ struct LocPilotApp: App {
         }
     }
 
-    /// 关窗口后是否继续驻留。开启后下次打开窗口是"接入已有会话"（约 0.3s），
-    /// 而不是重新起后端 + 导入 pymobiledevice3（约 3.1s）。
-    /// 默认关闭：多数人期望"关掉窗口就是退出"，必须让用户自己选。
-    @AppStorage("keepRunningAfterLastWindowClosed") private var keepRunning = false
-
     var body: some Scene {
         WindowGroup("LocPilot") {
             RootView()
@@ -30,7 +25,12 @@ struct LocPilotApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1180, height: 760)
         .commands {
-            CommandGroup(replacing: .newItem) { }
+            // 只清掉"新建窗口"（本应用不需要多窗口），但保留 File 菜单本身 ——
+            // 否则整组为空时菜单会消失，⌘W 也就没有绑定，用户只能去点红灯。
+            CommandGroup(replacing: .newItem) {
+                Button("关闭窗口") { NSApp.keyWindow?.performClose(nil) }
+                    .keyboardShortcut("w", modifiers: .command)
+            }
 
             CommandMenu("设备") {
                 Button("连接设备") { Task { await state.connect() } }
@@ -39,10 +39,6 @@ struct LocPilotApp: App {
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                 Button("恢复真实定位") { Task { await state.clearLocation() } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-            }
-
-            CommandGroup(after: .appInfo) {
-                Toggle("关闭窗口后继续在后台运行（下次打开秒连）", isOn: $keepRunning)
             }
 
             CommandMenu("地图") {
@@ -125,16 +121,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// 开关打开时，关掉最后一个窗口只是收起界面，后端与设备会话保持存活，
-    /// 再次打开（点 Dock 或 ⌘Tab）就是"接入已有会话"，不必重付冷启动成本。
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !UserDefaults.standard.bool(forKey: "keepRunningAfterLastWindowClosed")
-    }
+    /// 关掉最后一个窗口**不退出**：程序留在程序坞，后端与设备会话保持存活。
+    /// 真正的退出只有两条路：程序坞右键 → 退出，或 ⌘Q。
+    /// 这样下次从程序坞打开只是"把窗口拿回来"（约 0.3s），不必重付冷启动成本。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// 再次双击 App（或点 Dock 图标）时，把已有窗口带到前台而不是"没反应"。
+    /// 点程序坞图标时把窗口带回来。
+    /// 窗口已被关掉（场景销毁）时由 SwiftUI 重建 WindowGroup；我们能做的是：
+    /// 先激活应用，再把任何还能用的窗口置前 —— 返回 true 让系统继续走正常流程。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        if !flag, let window = sender.windows.first(where: { $0.canBecomeKey }) {
+        // 这里**只激活、不自己造窗口**：窗口被关掉后由 SwiftUI 重建 WindowGroup，
+        // 我们再 orderFront 一次就会多出一个重复窗口（实测过，会出现两个）。
+        if flag, let window = sender.windows.first(where: { $0.isVisible && $0.canBecomeKey }) {
             window.makeKeyAndOrderFront(nil)
         }
         return true
