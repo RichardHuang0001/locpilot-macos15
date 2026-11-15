@@ -180,6 +180,12 @@ public final class BackendController: ObservableObject {
         environment["LOCPILOT_HOME"] = Self.appSupport.path
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["PYTHONPYCACHEPREFIX"] = Self.appSupport.appendingPathComponent(".pycache").path
+        // 定位会话直接在后台进程内执行，不再为每次连接新起 worker 子进程。
+        // 实测（MacBook Air M1 / iOS 27.3）：连接 12s → 首次 2s、重连 0.3s。
+        // 原因：子进程每次都要重新导入 pymobiledevice3（约 2.6s），
+        // 旧的连接流程还会额外跑一次 `mounter auto-mount` 子进程（7.6s）。
+        // 会话跑在进程内后，隧道与 DTX 连接在进程存活期间可复用，重连只剩握手。
+        environment["LOCPILOT_PMD3_INPROC"] = "1"
 
         // GUI 进程的 PATH 极窄（launchd 只给 /usr/bin:/bin:/usr/sbin:/sbin），
         // Homebrew 工具与 venv 里的 pymobiledevice3 都找不到——必须显式补 PATH 与引擎路径。

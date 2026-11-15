@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -63,6 +65,22 @@ def _start_parent_watch(session: Session) -> None:
     threading.Thread(target=watch, name="locpilot-parent-watch", daemon=True).start()
 
 
+def _warm_engine_stack() -> None:
+    """后台预热 pymobiledevice3 的 DVT 栈。
+
+    `import pymobiledevice3` 及其 DVT 子模块在 M1 上约 2s，原本落在"用户点连接"的那一刻。
+    服务起来就先在后台导一遍，用户点下去只剩隧道握手（约 0.3s）。
+    失败无所谓：真到连接时还会再导一次并报真实错误。
+    """
+    try:
+        from pymobiledevice3.lockdown import create_using_usbmux  # noqa: F401
+        from pymobiledevice3.remote.userspace_tunnel import UserspaceRsdTunnel  # noqa: F401
+        from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider  # noqa: F401
+        from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation  # noqa: F401
+    except Exception:
+        pass
+
+
 def cmd_serve(args) -> int:
     settings = config.resolve_settings({"engine": args.engine, "tick_interval": args.tick})
     store = Store(path=config.ensure_data_dir() / "state.json", history_limit=int(settings.get("history_limit", 100)))
@@ -71,6 +89,8 @@ def cmd_serve(args) -> int:
         _start_parent_watch(session)
     port = args.port or (config.DEFAULT_PORT if args.port != 0 else find_free_port())
     server = LocPilotServer(session, host=args.host, port=port, token=args.token)
+    if os.environ.get("LOCPILOT_PMD3_INPROC") == "1":
+        threading.Thread(target=_warm_engine_stack, name="locpilot-warm", daemon=True).start()
     print("LocPilot %s 已启动: %s" % (config.VERSION, server.url))
     print("引擎: %s | 状态目录: %s" % (settings.get("engine", "auto"), config.data_dir()))
     if args.connect:

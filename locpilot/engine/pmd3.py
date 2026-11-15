@@ -349,6 +349,9 @@ class PyMobileDevice3Engine(Engine):
     def list_devices(self) -> List[DeviceInfo]:
         if inproc_enabled():
             return self._list_devices_inproc()
+        fast = self._list_devices_fast()
+        if fast is not None:
+            return fast
         result = self._cli(["usbmux", "list"], timeout=40.0)
         payload = None
         for chunk in (result.stdout or "").strip().split("\n"):
@@ -390,6 +393,52 @@ class PyMobileDevice3Engine(Engine):
                 )
             )
         return devices
+
+    def _list_devices_fast(self) -> Optional[List[DeviceInfo]]:
+        """进程内枚举设备，避免再起一个 Python 子进程。
+
+        原来走 `pymobiledevice3 usbmux list` 子进程，实测固定 3.4s ——
+        时间全花在解释器启动和导入整个 pymobiledevice3 上。
+        后端本身就跑在装了 pymobiledevice3 的解释器里，进程内只要 0.13s。
+
+        返回 None 表示这条路不可用（没装 pymobiledevice3、或当前线程已有事件循环），
+        调用方回落到子进程，行为不变。
+        """
+        try:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.usbmux import list_devices as mux_devices
+        except Exception:
+            return None
+
+        async def collect() -> List[DeviceInfo]:
+            out: List[DeviceInfo] = []
+            for dev in await mux_devices():
+                udid = getattr(dev, "serial", None)
+                if not udid:
+                    continue
+                info = DeviceInfo(
+                    udid=udid,
+                    engine=self.name,
+                    connection=str(getattr(dev, "connection_type", "usb") or "usb").lower(),
+                )
+                # 名字与系统版本只能问 lockdown（单台约 0.1s）；拿不到也不影响连接
+                try:
+                    lockdown = await create_using_usbmux(serial=udid, autopair=False)
+                    short = getattr(lockdown, "short_info", None) or {}
+                    info.name = short.get("DeviceName")
+                    info.ios_version = short.get("ProductVersion")
+                    closer = getattr(lockdown, "close", None)
+                    if callable(closer):
+                        await closer()
+                except Exception:
+                    pass
+                out.append(info)
+            return out
+
+        try:
+            return asyncio.run(collect())
+        except Exception:
+            return None
 
     # --- 会话 ----------------------------------------------------------
     def open(self, udid: Optional[str] = None) -> DeviceInfo:

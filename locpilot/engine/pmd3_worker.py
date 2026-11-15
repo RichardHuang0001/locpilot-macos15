@@ -58,10 +58,9 @@ class Session:
         self.udid = getattr(self.lockdown, "identifier", None) or udid
         major = self._major(self.product_version)
 
-        # 进程内模式：没有 pymobiledevice3 命令行，挂载要改用库调用；
-        # 且 iOS 17.4+（尤其 iOS 27 的 Cryptex1）必须经 RSD 挂载，所以顺序改成"先建 RSD 再挂"。
-        if mount and not _inproc():
-            self.detail["mount"] = await self._auto_mount()
+        # 挂载策略见下方 _open_dvt：**先直接开 DVT，失败才挂载**。
+        # 原实现每次连接都先跑一次 `pymobiledevice3 mounter auto-mount` 子进程，
+        # 实测固定消耗 7.6s，而 DDI 通常是已挂载的 —— 那 7.6s 纯属白等。
 
         if major is not None and major >= 17:
             provider = await self._rsd_provider(udid, rsd=rsd, tunnel=tunnel)
@@ -72,9 +71,8 @@ class Session:
             if callable(closer):
                 self.detail["rsd_closer"] = type(provider).__name__
                 self.stack.push_async_callback(closer)
-            if mount and _inproc():
-                self.detail["mount"] = await self._auto_mount(provider)
-            dvt = await self._enter(DvtProvider(provider))
+            # 先试后挂：DDI 已就绪时这里只有一次连接握手（约 0.04s）
+            dvt = await self._open_dvt(provider, mount)
             self.simulation = await self._enter(LocationSimulation(dvt))
             self.mode = "dvt"
         else:
@@ -189,29 +187,46 @@ class Session:
                 "或使用 --rsd HOST PORT 指定隧道" % (exc,)
             )
 
+    async def _open_dvt(self, provider, mount: bool):
+        """打开 DVT 服务；只有在"服务不存在"且允许挂载时，才补挂 DDI 后重试一次。
+
+        这样正常路径（DDI 已挂载）不会付出任何挂载开销，
+        只有手机刚重启、DDI 没挂上时才慢那一次。
+        """
+        from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+
+        try:
+            return await self._enter(DvtProvider(provider))
+        except Exception as exc:
+            text = str(exc)
+            missing = "dtservicehub" in text or "InvalidServiceError" in text
+            if not mount or not missing:
+                raise
+            self.detail["mount"] = await self._auto_mount(provider)
+            return await self._enter(DvtProvider(provider))
+
     @staticmethod
     async def _auto_mount(provider=None) -> str:
         """best-effort 挂载 Developer Disk Image；失败只记录不阻断。
 
-        进程内（Windows 打包）没有 pymobiledevice3 命令行，改用库里的 auto_mount；
+        一律用库调用：`pymobiledevice3 mounter auto-mount` 子进程实测 7.6s，
+        库调用在"已挂载"时会立刻抛 AlreadyMountedError（毫秒级），差距悬殊。
         iOS 17+ 传 RSD provider（Cryptex1 DDI 必须经 RSD），老系统传 lockdown。
         """
+        if provider is None:
+            return "auto-mount 跳过：缺少 lockdown/RSD 句柄"
         try:
-            if _inproc():
-                if provider is None:
-                    return "auto-mount 跳过：缺少 lockdown/RSD 句柄"
-                from pymobiledevice3.services.mobile_image_mounter import auto_mount
-
-                await auto_mount(provider)
-                return "auto-mount ok（库调用）"
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "pymobiledevice3", "mounter", "auto-mount",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            )
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=90)
-            return (out or b"").decode("utf-8", "replace").strip()[-300:]
+            from pymobiledevice3.exceptions import AlreadyMountedError
+            from pymobiledevice3.services.mobile_image_mounter import auto_mount
+        except Exception as exc:  # 老版本库没有这些符号
+            return "auto-mount 不可用: %s" % (exc,)
+        try:
+            await auto_mount(provider)
+            return "auto-mount ok（库调用）"
+        except AlreadyMountedError:
+            return "already mounted"
         except Exception as exc:
-            return "auto-mount 失败: %s" % (exc,)
+            return "auto-mount 失败: %s" % (str(exc)[:160],)
 
 
 class Bridge:
