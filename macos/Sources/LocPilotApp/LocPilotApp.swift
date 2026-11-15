@@ -121,10 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// 关掉最后一个窗口**不退出**：程序留在程序坞，后端与设备会话保持存活。
-    /// 真正的退出只有两条路：程序坞右键 → 退出，或 ⌘Q。
-    /// 这样下次从程序坞打开只是"把窗口拿回来"（约 0.3s），不必重付冷启动成本。
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    /// 关掉最后一个窗口就退出：窗口消失的同时，后端进程、设备会话、监听端口一并收掉，
+    /// 机器上不留任何 LocPilot 相关进程，也不需要为"驻留"付任何待机成本。
+    /// 代价是下次冷启动要重新起后端（实测约 3.1s），这个代价用户已明确接受。
+    /// 没有任何开机自启项：本应用不注册 LaunchAgent / 登录项 / 后台项。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// 点程序坞图标时把窗口带回来。
     /// 窗口已被关掉（场景销毁）时由 SwiftUI 重建 WindowGroup；我们能做的是：
